@@ -1,0 +1,111 @@
+#!/bin/sh
+
+help(){
+        echo "./weather [-h][-l locations][-u unit][-a|-c|-d day|-s]"
+        exit 1
+}
+#declar
+
+location_in=""
+unit="f"
+day=""
+has_l=""
+has_c=""
+has_d=""
+has_s=""
+woeid=""
+
+#conf
+
+exec 3< "weather.conf"
+while read line <&3 ; do
+        tmp=`echo $line |tr '=' ' ' |awk '{print $1}'`
+        cont=`echo $line |tr '=' ' ' |awk '{print $2}'`
+        if [ $tmp == "location" ] ; then
+                location_in=$cont
+                has_l="1"
+        elif [ $tmp == "unit" ] ; then
+                unit=$cont
+        fi
+done
+
+
+#optin
+
+while getopts hl:u:acd:s op ; do
+        case $op in
+                h)help ;;
+                l)location_in=$OPTARG
+                  has_l="1" ;;
+                u)unit=$OPTARG ;;
+                a)has_c="1"
+                  has_d="1"
+                  day="5"
+                  has_s="1" ;;
+                c)has_c="1" ;;
+                d)has_d="1"
+                  day=$OPTARG ;;
+                s)has_s="1" ;;
+                *)help ;;
+        esac
+done
+
+
+if [ -z  $has_l ] ; then
+        echo "Must specify location"
+        help
+fi
+
+if [ -z $has_c ] && [ -z $has_d ] && [ -z $has_s ] ; then
+        echo "Must specify type of information"
+        help
+fi
+
+#####################################################################
+#deal with locations
+
+location_in=`echo $location_in | tr ',' ' '`
+set $location_in
+for location in "$@" ; do
+      
+#taiwna to Taiwan
+location=`echo $location |awk '{printf "%s%s", toupper(substr($0,1,1)),substr($0,2)}'`
+
+#assign URL $location
+myadd="http://where.yahooapis.com/v1/places.q('%20$location')?appid=%5Bdj0yJmk9NGo3RnBxd1lWRmxaJmQ9WVdrOVJtcFpWa3RKTm5VbWNHbzlNQS0tJnM9Y29uc3VtZXJzZWNyZXQmeD1hNQ--%5D" 
+
+#assign woeid
+woeid=`curl -s ${myadd} |tr ' ' '\n' |tr '<' '\n'|sed -n "/${location}/p" | sed -n '/^woeid/p' | head -1 | sed 's/[a-zA-Z"=>]//g'`
+
+#curl to find weather
+if [ "$unit" = "c" ] ; then
+	if [ ! -z $has_c ] ; then
+		curl -s "http://weather.yahooapis.com/forecastrss?u=c&w=${woeid}" | awk '/^<yweather:condition/{print $2$3$4$5}' | tr '"' ' ' | awk -v location=$location 'BEGIN{ORS="";print location" City"}{print ", "$2", "$6" C\n"}'
+	fi
+elif [ "$unit" = "f" ] ; then
+	if [ ! -z $has_c ] ; then
+		 curl -s "http://weather.yahooapis.com/forecastrss?w=${woeid}" | awk '/^<yweather:condition/{print $2$3$4$5}' | tr '"' ' ' | awk -v location=$location 'BEGIN{ORS="";print location" City"}{print ", "$2", "$6" F\n"}'	
+		#curl -s "http://weather.yahooapis.com/forecastrss?w=${woeid}" | awk '/^<yweather:condition/{print $2" "$3,$5}' | tr '"' '\n' | sed '/text=/d' | sed '/temp=/d' | sed '/^$/d' | awk -v location=$location 'BEGIN{ORS="";print location}{print ", "$0}END{print " F\n"}'
+
+	fi
+fi
+
+#sunset
+if [ ! -z $has_s ] ; then
+	 curl -s "http://weather.yahooapis.com/forecastrss?w=${woeid}" | awk '/^<yweather:astronomy/{print $2$3" "$4$5}' | tr '"' ' ' | awk '{print "sunrise: "$2", sunset: "$4}'
+
+fi
+
+#n day forecast
+#day_d=`expr $day + 1`
+if [ ! -z $has_d ] ; then
+	 day_d=`expr $day + 1`
+	if [ "$unit" = "c" ] ; then
+		 curl -s "http://weather.yahooapis.com/forecastrss?u=c&w=${woeid}" | awk '/^<yweather:forecast/{print $2,$3$4,$5,$6$7,$8$9}' | sed  "$day_d,5d" | tr '"' ' ' | awk '{print $4" "$5" "$2" "$7" C ~ "$9" C "$11}'
+	elif [ "$unit" = "f" ] ; then
+		 curl -s "http://weather.yahooapis.com/forecastrss?w=${woeid}" | awk '/^<yweather:forecast/{print $2,$3$4,$5,$6$7,$8$9}' | sed  "$day_d,5d" | tr '"' ' ' | awk '{print $4" "$5" "$2" "$7" C ~ "$9" F "$11}'
+	fi
+fi
+
+done	
+
